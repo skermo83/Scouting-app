@@ -979,14 +979,16 @@ function renderSettings() {
       <h3 style="margin-top:0">🗣️ “Hey Siri” set-up (iPhone)</h3>
       <p class="muted">Make a Shortcut so you can say <b>“Hey Siri, scout”</b> then <b>“ryegrass twelve”</b> without touching the screen.</p>
       <ol class="steps">
-        <li>Open the <b>Shortcuts</b> app → <b>＋</b> new shortcut. Name it <b>Scout</b> (that's the phrase you'll say).</li>
-        <li>Add action <b>Dictate Text</b> (Stop listening: <i>After Pause</i>).</li>
-        <li>Add <b>Get Current Location</b>, then <b>Get Details of Locations</b> → <i>Latitude</i>. Add it again for <i>Longitude</i>.</li>
-        <li>Add <b>URL</b> with this text, inserting the magic variables where shown:
-          <code class="url">${esc(siriUrl)}[Dictated Text]&amp;lat=[Latitude]&amp;lon=[Longitude]</code>
-          <button class="btn small" data-act="copy-siri">Copy base URL</button></li>
-        <li>Add <b>Open URLs</b>. Done — say “Hey Siri, Scout”.</li>
+        <li>Tap <b>Copy link</b>: <code class="url">${esc(siriUrl)}</code>
+          <button class="btn small" data-act="copy-siri">Copy link</button></li>
+        <li>Open the <b>Shortcuts</b> app → <b>＋</b> (top right).</li>
+        <li><b>Search for actions</b> → <b>Dictate Text</b>.</li>
+        <li>Search → <b>URL Encode</b>. It links to <i>Dictated Text</i> automatically.</li>
+        <li>Search → <b>Text</b>. In the box, long-press → <b>Paste</b>, then tap <b>Variable</b> above the keyboard (or the <b>Select Variable</b> button) → <i>URL Encoded Text</i>, so it reads <code class="url">${esc(siriUrl)}[URL Encoded Text]</code></li>
+        <li>Search → <b>Open URLs</b>. It links to <i>Text</i> automatically.</li>
+        <li>Tap the name at the top → <b>Rename</b> → <b>Scout</b> → <b>Done</b>.</li>
       </ol>
+      <p class="muted">Test it by tapping the shortcut once, say “ryegrass twelve”, and allow Safari to use your location. Then try “Hey Siri, Scout”.</p>
       <p class="muted">Siri opens this app in <b>Safari</b>. On iPhone, Safari and a home-screen app keep separate data, so if you use Siri, run Crop Scout from Safari (bookmark it) rather than the home-screen icon. The in-app 🎤 and <b>Hands-free</b> mode work either way.</p>
     </div>
 

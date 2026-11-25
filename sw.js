@@ -1,5 +1,5 @@
 // Offline support: app shell cached on install; map tiles cached as you view them.
-const VERSION = 'cropscout-v3';
+const VERSION = 'cropscout-v4';
 const TILE_CACHE = 'cropscout-tiles';
 const SHELL = [
   './', './index.html', './css/styles.css', './manifest.webmanifest',

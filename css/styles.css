@@ -14,6 +14,7 @@
   --pests: #b7591f;
   --diseases: #7b4bb3;
   --other: #6b7280;
+  --plant: #0e7c86;
   --radius: 14px;
   --tabbar-h: 64px;
   color-scheme: light dark;
@@ -31,6 +32,7 @@
     --weeds: #4fb072;
     --pests: #e08a4a;
     --diseases: #a982dc;
+    --plant: #2aa7b1;
   }
 }
 
@@ -222,3 +224,17 @@ code.url { display: block; word-break: break-all; background: var(--bg); padding
 .rep-table .unit { font-size: 0.72rem; color: var(--muted); font-weight: 400; }
 .rep-table.overview th, .rep-table.overview td { text-align: left; vertical-align: top; }
 @media print { .lvl { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+/* Plant tab */
+.seg.seg4 { grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; }
+.seg.seg4 button { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 0.82rem; min-height: 54px; padding: 4px 2px; }
+.seg.seg4 button span { font-size: 1.15rem; line-height: 1; }
+.seg button.active[data-cat=plant] { background: var(--plant); }
+.cat-plant { background: var(--plant); }
+.stage-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; max-height: 52vh; overflow: auto; }
+.stage-opt { min-height: 52px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); text-align: left; font-weight: 600; line-height: 1.2; }
+.stage-opt.active { background: var(--plant); border-color: var(--plant); color: #fff; }
+.list .stage-val { font-size: 0.95rem; max-width: 45%; white-space: normal; }
+.metric-list li { padding: 8px 2px; }
+.item-btn small b { color: var(--ink); }
+.item-btn { padding-right: 34px; }

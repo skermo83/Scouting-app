@@ -1,4 +1,4 @@
-import { CATEGORIES, UNITS, DEFAULT_CROPS } from './defaults.js';
+import { CATEGORIES, UNITS, DEFAULT_CROPS, PLANT_CAT, METRIC_TYPES, stageCode, DEFAULT_PLANT_METRICS, GENERIC_PLANT_METRICS } from './defaults.js';
 import { state, save, uid, cropById, fieldById, replaceAll, requestPersistence } from './store.js';
 import { Tracker, fieldAt, areaHa, fieldCenter, distance, fieldBBox } from './geo.js';
 import { readBoundaryFiles, guessNameKey, guessCropKey } from './importer.js';
@@ -13,8 +13,9 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => dayKey(Date.now());
 const daysAgo = (n) => dayKey(Date.now() - n * 86400000);
-const CAT = Object.fromEntries([...CATEGORIES.map((c) => [c.key, c]), ['other', { key: 'other', label: 'Other', icon: '❓' }]]);
-const CAT_COLOR = { weeds: '#2f7d4a', pests: '#b7591f', diseases: '#7b4bb3', other: '#6b7280' };
+const SCOUT_TABS = [...CATEGORIES, PLANT_CAT];
+const CAT = Object.fromEntries([...SCOUT_TABS.map((c) => [c.key, c]), ['other', { key: 'other', label: 'Other', icon: '❓' }]]);
+const CAT_COLOR = { weeds: '#2f7d4a', pests: '#b7591f', diseases: '#7b4bb3', plant: '#0e7c86', other: '#6b7280' };
 const hasMap = () => typeof window.L !== 'undefined';
 
 const UI_KEY = 'cropscout.ui';
@@ -100,18 +101,19 @@ function renderStatus() {
 
 // ---------------------------------------------------------------------------
 // Records
-function addRecord({ category, item, count, unit, note = '', source = 'tap', pos = lastPos, field }) {
+function addRecord({ category, item, count, unit, stage, note = '', source = 'tap', pos = lastPos, field }) {
   const f = field !== undefined ? field : currentField();
   const crop = (f && cropById(f.cropId)) || currentCrop();
   const r = {
     id: uid(), ts: Date.now(),
     fieldId: f?.id || null, fieldName: f?.name || null,
     cropId: crop?.id || null, cropName: crop?.name || null,
-    category, item, count: Number(count) || 0, unit, note, source,
+    category, item, count: Number(count) || 0, unit: unit || '', note, source,
     lat: pos?.lat ?? null, lng: pos?.lng ?? null, acc: pos?.acc ?? null,
   };
+  if (stage != null) { r.stage = stage; r.count = stageCode(stage) ?? 0; }
   state.records.push(r);
-  state.lastUnit[item] = unit;
+  if (category !== 'plant') state.lastUnit[item] = unit;
   save();
   undoStack.push(r.id);
   return r;
@@ -128,13 +130,17 @@ function undoLast() {
   const r = state.records.find((x) => x.id === id);
   if (!r) return toast('Nothing to undo');
   deleteRecord(id);
-  toast(`Removed ${r.item} ${r.count}`);
+  toast(`Removed ${recordLabel(r)}`);
   speak(`Removed ${r.item}`);
   rerender();
 }
 
 const unitFor = (category, item) => state.lastUnit[item] || state.units[category] || 'count';
-const recordLabel = (r) => `${r.item} ${r.count} ${r.unit}`;
+const recordLabel = (r) => (r.stage != null ? `${r.item}: ${r.stage}` : `${r.item} ${r.count} ${r.unit}`.trim());
+const recordShort = (r) => (r.stage != null ? `${r.item} ${r.stage}` : `${r.item} ${r.count}`);
+const metricsOf = (crop) => crop?.plant || [];
+const findMetric = (cropId, name) => metricsOf(cropById(cropId)).find((m) => m.name === name)
+  || state.crops.flatMap(metricsOf).find((m) => m.name === name) || null;
 
 // ---------------------------------------------------------------------------
 // Toast, sheet, misc
@@ -191,7 +197,7 @@ function recordItemHTML(r, { showField = false } = {}) {
     <span class="tag cat-${r.category}"></span>
     <div class="grow"><div class="title">${esc(r.item)}${r.source === 'voice' || r.source === 'siri' ? ' 🎤' : ''}</div>
       <div class="sub">${fmtTime(r.ts)}${showField ? ` · ${esc(r.fieldName || 'Outside fields')}` : ''}${r.note ? ` · ${esc(r.note)}` : ''}</div></div>
-    <div class="val">${r.count}<small>${esc(r.unit)}</small></div></li>`;
+    ${r.stage != null ? `<div class="val stage-val">${esc(r.stage)}</div>` : `<div class="val">${r.count}<small>${esc(r.unit)}</small></div>`}</li>`;
 }
 
 function destroyMaps() {
@@ -240,7 +246,8 @@ let wakeLock = null;
 function renderScout() {
   const crop = currentCrop();
   const f = currentField();
-  const items = crop ? crop[ui.category] || [] : [];
+  if (!CAT[ui.category] || ui.category === 'other') ui.category = 'weeds';
+  const items = crop && ui.category !== 'plant' ? crop[ui.category] || [] : [];
   const todays = state.records.filter((r) => dayKey(r.ts) === today() && (r.fieldId || null) === (f?.id || null));
   const countsToday = {};
   todays.forEach((r) => { countsToday[r.item] = (countsToday[r.item] || 0) + 1; });
@@ -262,15 +269,28 @@ function renderScout() {
       <button class="mic ${listening ? 'listening' : ''}" data-act="mic">${listening ? (hf ? '🎙️ Listening… (tap to stop)' : '🎙️ Listening…') : '🎤 Tap & speak a count'}</button>
       <button class="btn hf ${hf ? 'on' : ''}" data-act="handsfree">Hands-free<br>${hf ? 'ON' : 'off'}</button>
     </div>
-    <div class="heard" id="heard">${heardText || (speechSupported ? 'Say e.g. <b>“ryegrass 12”</b> or <b>“aphids 5 per plant, wild oats 3”</b>. Say <b>“undo”</b> to remove the last one.' : 'Voice entry needs Safari (iPhone) or Chrome (Android).')}</div>
+    <div class="heard" id="heard">${heardText || (!speechSupported ? 'Voice entry needs Safari (iPhone) or Chrome (Android).'
+      : ui.category === 'plant' ? 'Say e.g. <b>“plant stand 12”</b>, <b>“nodes 16 NAWF 4”</b> or <b>“stage first flower”</b> / <b>“stage 31”</b>.'
+        : 'Say e.g. <b>“ryegrass 12”</b> or <b>“aphids 5 per plant, wild oats 3”</b>. Say <b>“undo”</b> to remove the last one.')}</div>
 
-    <div class="seg">${CATEGORIES.map((c) => `<button data-act="cat" data-cat="${c.key}" class="${ui.category === c.key ? 'active' : ''}">${c.icon} ${c.label}</button>`).join('')}</div>
+    <div class="seg seg4">${SCOUT_TABS.map((c) => `<button data-act="cat" data-cat="${c.key}" class="${ui.category === c.key ? 'active' : ''}"><span>${c.icon}</span>${c.label}</button>`).join('')}</div>
 
     <div class="items">
-      ${items.map((it) => `<button class="item-btn" data-act="count" data-item="${esc(it)}">${esc(it)}
+      ${ui.category === 'plant' ? metricsOf(crop).map((m, i) => {
+        const recs = todays.filter((r) => r.category === 'plant' && r.item === m.name);
+        const last = recs[recs.length - 1];
+        let info = m.type === 'stage' ? 'tap to pick stage' : esc(m.unit || '');
+        if (last) {
+          info = m.type === 'stage' ? `<b>${esc(last.stage)}</b>`
+            : `${recs.length > 1 ? 'avg ' : ''}<b>${Math.round((recs.reduce((s, r) => s + r.count, 0) / recs.length) * 10) / 10}</b> ${esc(m.unit || '')}`;
+        }
+        return `<button class="item-btn" data-act="metric" data-i="${i}">${m.type === 'stage' ? '📈 ' : ''}${esc(m.name)}
+          <small>${info}</small>
+          ${recs.length ? `<span class="dot cat-plant">${recs.length}</span>` : ''}</button>`;
+      }).join('') : items.map((it) => `<button class="item-btn" data-act="count" data-item="${esc(it)}">${esc(it)}
           <small>${esc(unitFor(ui.category, it))}</small>
           ${countsToday[it] ? `<span class="dot cat-${ui.category}">${countsToday[it]}</span>` : ''}</button>`).join('')}
-      <button class="item-btn add" data-act="add-item">＋ Add ${CAT[ui.category].label.toLowerCase().replace(/s$/, '')}</button>
+      <button class="item-btn add" data-act="${ui.category === 'plant' ? 'add-metric' : 'add-item'}">＋ Add ${ui.category === 'plant' ? 'metric' : CAT[ui.category].label.toLowerCase().replace(/s$/, '')}</button>
     </div>
 
     <h3>Today${f ? ` in ${esc(f.name)}` : ' outside fields'} (${todays.length})</h3>
@@ -291,9 +311,53 @@ function renderScout() {
   $('#cropSelect').onchange = (e) => { ui.cropId = e.target.value; saveUI(); renderScout(); };
 }
 
-function openCountSheet({ category, item, record }) {
+// Growth stage (or any pick-list metric): one tap on an option saves it.
+function openStageSheet({ metric, record }) {
   const editing = !!record;
-  const unit = record?.unit || unitFor(category, item);
+  const f = editing ? { name: record.fieldName } : currentField();
+  const options = [...new Set([...(metric?.options || []), ...(record?.stage ? [record.stage] : [])])];
+  const name = metric?.name || record?.item || 'Growth stage';
+  openSheet(`
+    <h2>🌱 ${esc(name)}</h2>
+    <div class="muted">${esc(f?.name || 'Outside fields')}${editing ? ` · ${fmtDay(dayKey(record.ts))} ${fmtTime(record.ts)}` : lastPos ? ` · GPS ±${Math.round(lastPos.acc)}m` : ' · no GPS fix yet'}</div>
+    <div class="stage-grid">${options.map((o, i) => `<button class="stage-opt ${record?.stage === o ? 'active' : ''}" data-opt="${i}">${esc(o)}</button>`).join('') || '<p class="muted">No options — add some in Settings → Plant metrics.</p>'}</div>
+    <div class="stack" style="margin-top:10px">
+      <div><label class="lbl">Note (optional)</label><input id="note" type="text" value="${esc(record?.note || '')}"></div>
+      <div class="row">
+        ${editing ? '<button class="btn danger" data-sheet="delete">Delete</button>' : ''}
+        <button class="btn" data-sheet="cancel">${editing ? 'Close' : 'Cancel'}</button>
+      </div>
+    </div>`, {
+    onMount: (s) => {
+      s.onclick = (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.sheet === 'cancel') closeSheet();
+        if (b.dataset.sheet === 'delete' && confirm('Delete this record?')) { deleteRecord(record.id); closeSheet(); rerender(); }
+        if (b.dataset.opt != null) {
+          const opt = options[Number(b.dataset.opt)];
+          const note = $('#note', s).value.trim();
+          if (editing) {
+            Object.assign(record, { stage: opt, count: stageCode(opt) ?? 0, note });
+            save();
+            toast('Updated');
+          } else {
+            const r = addRecord({ category: 'plant', item: name, stage: opt, note });
+            toast(`Saved ${recordLabel(r)}`, { label: 'Undo', fn: () => { deleteRecord(r.id); rerender(); } });
+            buzz(40);
+          }
+          closeSheet();
+          rerender();
+        }
+      };
+      s.querySelector('.stage-opt.active')?.scrollIntoView({ block: 'center' });
+    },
+  });
+}
+
+function openCountSheet({ category, item, record, unit: presetUnit }) {
+  const editing = !!record;
+  const unit = record?.unit || presetUnit || unitFor(category, item);
   const f = editing ? { name: record.fieldName } : currentField();
   openSheet(`
     <h2>${CAT[category].icon} ${esc(item)}</h2>
@@ -365,13 +429,14 @@ function handleSpeech(text) {
     return;
   }
   const saved = entries.map((e) => addRecord({
-    category: e.category, item: e.item, count: e.count, unit: e.unit || unitFor(e.category, e.item),
+    category: e.category, item: e.item, count: e.count, stage: e.stage,
+    unit: e.category === 'plant' ? e.unit : e.unit || unitFor(e.category, e.item),
     note: e.matched ? '' : `Voice: "${e.heard}" (not in menu)`, source: 'voice',
   }));
-  heardText = `Heard: <b>${esc(text)}</b> → saved ${saved.map((r) => `${esc(r.item)} ${r.count}`).join(', ')}`;
+  heardText = `Heard: <b>${esc(text)}</b> → saved ${saved.map((r) => esc(recordShort(r))).join(', ')}`;
   const unmatched = entries.filter((e) => !e.matched).length;
   toast(`🎤 Saved ${saved.map(recordLabel).join(', ')}${unmatched ? ' (check unmatched)' : ''}`, { label: 'Undo', fn: undoLast });
-  speak(saved.map((r) => `${r.item} ${r.count}`).join(', '));
+  speak(saved.map(recordShort).join(', '));
   buzz(60);
   if (ui.tab === 'scout') renderScout();
 }
@@ -794,6 +859,58 @@ function emailReport() {
   location.href = `mailto:${encodeURIComponent(state.reportEmail || '')}?subject=${encodeURIComponent(reportSubject(rep))}&body=${encodeURIComponent(body)}`;
 }
 
+// Add / edit a plant metric for a crop. index = null to add a new one.
+function openMetricEditor(crop, index, after) {
+  if (!crop) return;
+  crop.plant ||= [];
+  const m = index == null ? { name: '', type: 'number', unit: '', options: [] } : structuredClone(crop.plant[index]);
+  openSheet(`
+    <h2>${index == null ? 'New' : 'Edit'} plant metric <small class="muted">· ${esc(crop.name)}</small></h2>
+    <div class="stack">
+      <div><label class="lbl">Name</label><input id="mName" type="text" value="${esc(m.name)}" placeholder="e.g. NAWF, Nodes, Plant stand"></div>
+      <div><label class="lbl">Type</label><select id="mType">${METRIC_TYPES.map((t) => `<option value="${t.key}" ${t.key === m.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></div>
+      <div id="mUnitWrap"><label class="lbl">Unit</label><input id="mUnit" type="text" value="${esc(m.unit || '')}" placeholder="e.g. plants/m², nodes, cm, %"></div>
+      <div id="mOptsWrap"><label class="lbl">Options — one per line, in order</label>
+        <textarea id="mOpts" rows="8" placeholder="Z31 1st node&#10;Z32 2nd node">${esc((m.options || []).join('\n'))}</textarea>
+        <div class="muted">Start a line with a number or code (e.g. “Z31”, “6”, “1.05”) so the report can show the stage range.</div></div>
+      <div class="row">
+        ${index != null ? '<button class="btn danger" data-m="delete">Delete</button>' : '<button class="btn" data-m="cancel">Cancel</button>'}
+        <button class="btn primary" data-m="save">Save</button>
+      </div>
+    </div>`, {
+    onMount: (s) => {
+      const sync = () => {
+        const stage = $('#mType', s).value === 'stage';
+        $('#mUnitWrap', s).hidden = stage;
+        $('#mOptsWrap', s).hidden = !stage;
+      };
+      $('#mType', s).onchange = sync;
+      sync();
+      s.onclick = (e) => {
+        const b = e.target.closest('[data-m]');
+        if (!b) return;
+        if (b.dataset.m === 'cancel') return closeSheet();
+        if (b.dataset.m === 'delete') {
+          if (confirm(`Remove “${m.name}” from ${crop.name}? Existing records are kept.`)) { crop.plant.splice(index, 1); save(); closeSheet(); after?.(); }
+          return;
+        }
+        const name = $('#mName', s).value.trim();
+        const type = $('#mType', s).value;
+        if (!name) return toast('Give the metric a name');
+        if (crop.plant.some((x, i) => i !== index && x.name.toLowerCase() === name.toLowerCase())) return toast('That name is already used');
+        const options = $('#mOpts', s).value.split('\n').map((x) => x.trim()).filter(Boolean);
+        if (type === 'stage' && !options.length) return toast('Add at least one option');
+        const next = type === 'stage' ? { name, type, unit: '', options } : { name, type, unit: $('#mUnit', s).value.trim() };
+        if (index == null) crop.plant.push(next); else crop.plant[index] = next;
+        save();
+        closeSheet();
+        toast(`Saved ${name}`);
+        after?.();
+      };
+    },
+  });
+}
+
 // ----- Settings ------------------------------------------------------------
 function appUrl() { return `${location.origin}${location.pathname}`; }
 
@@ -820,7 +937,19 @@ function renderSettings() {
             <label class="lbl">${c.icon} ${c.label} (${crop[c.key].length})</label>
             <div class="chips">${crop[c.key].map((it, i) => `<span class="chip">${esc(it)}<button data-act="item-del" data-cat="${c.key}" data-i="${i}" aria-label="remove">✕</button></span>`).join('')}</div>
             <div class="row"><input type="text" id="new-${c.key}" placeholder="Add ${c.label.toLowerCase().replace(/s$/, '')}…"><button class="btn small" style="flex:none" data-act="item-add" data-cat="${c.key}">Add</button></div>
-          </div>`).join('')}` : '<p class="muted">No crops — add one.</p>'}
+          </div>`).join('')}
+        <div>
+          <label class="lbl">🌱 Plant metrics (${metricsOf(crop).length})</label>
+          <ul class="list metric-list">${metricsOf(crop).map((m, i) => `
+            <li><div class="grow"><div class="title">${esc(m.name)}</div>
+              <div class="sub">${m.type === 'stage' ? `Stage · ${m.options.length} options` : `Number${m.unit ? ` · ${esc(m.unit)}` : ''}`}</div></div>
+              <button class="btn small" style="flex:none" data-act="metric-up" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="move up">↑</button>
+              <button class="btn small" style="flex:none" data-act="metric-edit" data-i="${i}">Edit</button></li>`).join('')}</ul>
+          <div class="row">
+            <button class="btn small" data-act="add-metric-settings">＋ Add metric</button>
+            <button class="btn small" data-act="metric-defaults">Restore defaults</button>
+          </div>
+        </div>` : '<p class="muted">No crops — add one.</p>'}
     </div>
 
     <div class="card stack">
@@ -912,7 +1041,7 @@ document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const act = el.dataset.act;
-  const crop = act.startsWith('crop') || act.startsWith('item-') ? cropById(ui.settingsCrop) : null;
+  const crop = /^(crop|item-|metric-|add-metric-settings)/.test(act) ? cropById(ui.settingsCrop) : null;
 
   switch (act) {
     case 'close-sheet': closeSheet(); break;
@@ -925,9 +1054,32 @@ document.addEventListener('click', async (e) => {
     }
     case 'edit-record': {
       const r = state.records.find((x) => x.id === el.dataset.id);
-      if (r) openCountSheet({ category: r.category, item: r.item, record: r });
+      if (!r) break;
+      if (r.stage != null) openStageSheet({ metric: findMetric(r.cropId, r.item), record: r });
+      else openCountSheet({ category: r.category, item: r.item, record: r });
       break;
     }
+    case 'metric': {
+      const m = metricsOf(currentCrop())[Number(el.dataset.i)];
+      if (!m) break;
+      if (m.type === 'stage') openStageSheet({ metric: m });
+      else openCountSheet({ category: 'plant', item: m.name, unit: m.unit });
+      break;
+    }
+    case 'add-metric': openMetricEditor(currentCrop(), null, renderScout); break;
+    case 'add-metric-settings': openMetricEditor(crop, null, renderSettings); break;
+    case 'metric-edit': openMetricEditor(crop, Number(el.dataset.i), renderSettings); break;
+    case 'metric-up': {
+      const i = Number(el.dataset.i);
+      if (i > 0) { [crop.plant[i - 1], crop.plant[i]] = [crop.plant[i], crop.plant[i - 1]]; save(); renderSettings(); }
+      break;
+    }
+    case 'metric-defaults':
+      if (confirm(`Replace the ${crop.name} plant metrics with the defaults?`)) {
+        crop.plant = structuredClone(DEFAULT_PLANT_METRICS[crop.id] || GENERIC_PLANT_METRICS());
+        save(); renderSettings();
+      }
+      break;
     case 'mic': {
       const l = ensureListener();
       if (l.active) l.stop(); else l.start(false);
@@ -962,7 +1114,7 @@ document.addEventListener('click', async (e) => {
       const name = prompt('New crop name (e.g. Lentil, Oats, Cotton):');
       if (!name?.trim()) break;
       const copy = state.crops.length && confirm(`Copy weeds/pests/diseases from ${cropById(ui.settingsCrop)?.name}?`) ? cropById(ui.settingsCrop) : null;
-      const c = { id: uid(), name: name.trim(), weeds: [...(copy?.weeds || [])], pests: [...(copy?.pests || [])], diseases: [...(copy?.diseases || [])] };
+      const c = { id: uid(), name: name.trim(), weeds: [...(copy?.weeds || [])], pests: [...(copy?.pests || [])], diseases: [...(copy?.diseases || [])], plant: copy ? structuredClone(copy.plant || []) : GENERIC_PLANT_METRICS() };
       state.crops.push(c); ui.settingsCrop = c.id; save(); saveUI(); renderSettings();
       break;
     }
@@ -1039,7 +1191,8 @@ async function handleSiriLaunch() {
     return rerender();
   }
   const saved = entries.map((en) => addRecord({
-    category: en.category, item: en.item, count: en.count, unit: en.unit || unitFor(en.category, en.item),
+    category: en.category, item: en.item, count: en.count, stage: en.stage,
+    unit: en.category === 'plant' ? en.unit : en.unit || unitFor(en.category, en.item),
     note: en.matched ? '' : `Siri: "${en.heard}" (not in menu)`, source: 'siri', pos, field,
   }));
   save();

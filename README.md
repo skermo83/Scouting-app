@@ -10,15 +10,20 @@ It's an installable web app (PWA): no App Store needed, works offline once loade
   - **Import boundaries** from your farm mapping or yield software: shapefile (`.zip`, or `.shp` + `.dbf` + `.prj` picked together), KML/KMZ (Google Earth) or GeoJSON. Projected shapefiles (e.g. GDA94/GDA2020 MGA zones) are reprojected using the `.prj`. Paddock names and crops are read from the attribute table, and re-importing updates existing fields by name without losing records.
   - Or draw fields by tapping corners on a satellite map, walking or driving the fence line, or dropping a circle where you stand.
 - **Automatic field detection**: GPS works out which paddock you're in and logs when you **walk in and out**, with on-screen and vibration alerts. You can also pin a field manually.
-- **Customisable scouting menus** per crop (weeds / pests / diseases). Defaults are provided for Wheat, Barley, Canola, Chickpea and Faba bean. Add or remove crops and items in Settings, or add an item on the spot from the Scout screen.
+- **Customisable scouting menus** per crop (weeds / pests / diseases). Defaults are provided for Wheat, Barley, Canola, Chickpea, Faba bean and Cotton. Add or remove crops and items in Settings, or add an item on the spot from the Scout screen.
+- **🌱 Plant tab**: plant stand counts, growth stages and any other crop measurement, set per crop.
+  - *Number* metrics, e.g. plant stand, nodes, NAWF / NAWS, fruit retention %, squares or bolls per m, height, tillers, pods per plant.
+  - *Stage* metrics: one tap picks from a list, e.g. Zadoks for cereals, canola growth stages, cotton (squaring → first flower → cutout → open boll), or pulse stages.
+  - Add, edit, reorder or remove metrics, or create your own pick lists, in Settings → Plant metrics.
 - **Fast counting**: tap an item, then use the big +/− buttons, quick numbers or the keypad. Units: plants/m², per m², per plant, per 10 sweeps, % plants affected, severity 0–9, count. Each item remembers its last unit.
 - **Voice entry**
-  - 🎤 Tap and say “ryegrass 12”, “aphids 5 per plant, wild oats three” or “RLEM 40”. Spoken numbers, plurals and acronyms are understood. Say “undo” to remove the last entry.
+  - 🎤 Tap and say “ryegrass 12”, “aphids 5 per plant, wild oats three” or “RLEM 40”. Plant metrics work too: “plant stand 12”, “nodes 16 NAWF 4”, “stage 31”, “growth stage first flower”. Spoken numbers, plurals and acronyms are understood. Say “undo” to remove the last entry.
   - **Hands-free mode** keeps listening and keeps the screen awake while you walk.
   - **“Hey Siri, Scout”** through an iPhone Shortcut (set-up steps are in Settings).
 - **Summary report** for any date range (Today / Yesterday / 7 days / 30 days / custom):
   - Field overview with the worst Weeds / Pests / Diseases rating per field.
-  - For each field and each item: **field average**, max, % of stops where it was found, and a **Low / Moderate / High** severity rating.
+  - For each field and each weed, pest and disease: **field average**, max, % of stops where it was found, and a **Low / Moderate / High** severity rating.
+  - **Plant metrics** per field: average, range and CV% (coefficient of variation) of the readings, e.g. stand evenness, nodes, NAWF. For stages, the most common stage on the latest scouting day plus the range across the paddock. The field overview shows the current stage.
   - Optional **by-day** breakdown, with paddock in/out times.
   - Share sheet (text plus a field-summary CSV and an all-counts CSV), email, PDF/print, or CSV download.
 - **Records**: list or map of every count, filterable by date and field, and editable.
@@ -30,6 +35,7 @@ Counts are grouped into **stops**: records within about 30 m and 10 minutes of e
 
 - **Field avg** = total count ÷ number of stops in the field. Stops where the item wasn't recorded count as 0, so patchy weeds don't look field-wide.
 - **Found** = % of stops where it was present.
+- Plant metrics are *not* zero-filled. They are the average of the readings actually taken.
 - **Level** = the field average compared with per-unit thresholds (Settings → Severity levels). Defaults:
 
 | Unit | Moderate ≥ | High ≥ |

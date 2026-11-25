@@ -42,6 +42,41 @@ export function severity(value, unit, thresholds = DEFAULT_THRESHOLDS) {
   return value >= high ? 3 : value >= mod ? 2 : 1;
 }
 
+// Plant metrics: numbers -> mean of readings (no zero-fill), range, CV%;
+// stages -> predominant stage on the latest day scouted, and the range.
+export function plantStats(records) {
+  const groups = new Map();
+  for (const r of records) {
+    if (r.category !== 'plant') continue;
+    const isStage = r.stage != null;
+    const k = isStage ? `stage|${r.item}` : `num|${r.item}|${r.unit}`;
+    if (!groups.has(k)) groups.set(k, { item: r.item, unit: isStage ? '' : r.unit, type: isStage ? 'stage' : 'number', recs: [] });
+    groups.get(k).recs.push(r);
+  }
+  return [...groups.values()].map((g) => {
+    if (g.type === 'number') {
+      const v = g.recs.map((r) => Number(r.count) || 0);
+      const mean = v.reduce((s, x) => s + x, 0) / v.length;
+      const sd = v.length > 1 ? Math.sqrt(v.reduce((s, x) => s + (x - mean) ** 2, 0) / (v.length - 1)) : 0;
+      return { ...g, n: v.length, avg: round(mean), min: Math.min(...v), max: Math.max(...v), cv: mean ? Math.round((sd / mean) * 100) : null };
+    }
+    const latestDay = g.recs.map((r) => dayKey(r.ts)).sort().pop();
+    const latest = g.recs.filter((r) => dayKey(r.ts) === latestDay);
+    const tally = new Map();   // stage -> {n, lastTs}
+    latest.forEach((r) => { const t = tally.get(r.stage) || { n: 0, lastTs: 0 }; tally.set(r.stage, { n: t.n + 1, lastTs: Math.max(t.lastTs, r.ts) }); });
+    const byCode = [...latest].sort((a, b) => a.count - b.count);
+    // Most common stage; ties go to the most recently recorded one.
+    const mode = [...tally.entries()].sort((a, b) => b[1].n - a[1].n || b[1].lastTs - a[1].lastTs)[0][0];
+    const codeOf = (s) => String(s).split(/\s+/)[0];
+    const lo = byCode[0].stage, hi = byCode[byCode.length - 1].stage;
+    return {
+      ...g, n: g.recs.length, latestDay, stage: mode,
+      range: lo === hi ? '' : `${codeOf(lo)}–${codeOf(hi)}`,
+      pct: Math.round((tally.get(mode).n / latest.length) * 100),
+    };
+  }).sort((a, b) => (a.type === 'stage' ? -1 : 0) - (b.type === 'stage' ? -1 : 0));
+}
+
 // Per-item statistics over a set of stops.
 function itemStats(stops, thresholds) {
   const n = stops.length;
@@ -50,6 +85,7 @@ function itemStats(stops, thresholds) {
     // If an item was recorded twice at one stop, use the higher count.
     const seen = new Map();
     for (const r of stop.records) {
+      if (r.category === 'plant') continue;   // plant metrics are summarised separately
       const k = `${r.category}|${r.item}|${r.unit}`;
       seen.set(k, Math.max(seen.get(k) ?? 0, Number(r.count) || 0));
       if (!groups.has(k)) groups.set(k, { category: r.category, item: r.item, unit: r.unit, values: [] });
@@ -122,10 +158,12 @@ export function buildReport(state, { from, to, fieldId = 'all', byDay = false })
       items,
       byCat: byCategory(items),
       cats,
+      plant: plantStats(fr),
       days,
       daily: byDay ? days.map((d) => {
-        const ds = assignStops(fr.filter((r) => dayKey(r.ts) === d));
-        return { key: d, stops: ds.length, byCat: byCategory(itemStats(ds, thresholds)), visits: visitsFor(fe.filter((e) => dayKey(e.ts) === d)) };
+        const dr = fr.filter((r) => dayKey(r.ts) === d);
+        const ds = assignStops(dr);
+        return { key: d, stops: ds.length, byCat: byCategory(itemStats(ds, thresholds)), plant: plantStats(dr), visits: visitsFor(fe.filter((e) => dayKey(e.ts) === d)) };
       }) : [],
     };
   }).filter((f) => f.records.length || f.days.length);
@@ -138,6 +176,11 @@ const visitText = (v) => `${v.in ? fmtTime(v.in) : '?'}–${v.out ? fmtTime(v.ou
 const rangeText = (rep) => (rep.from === rep.to ? fmtDay(rep.from) : `${fmtDay(rep.from)} – ${fmtDay(rep.to)}`);
 const datesText = (f) => f.days.slice().reverse().map((d) => fmtDay(d).replace(/,? \d{4}$/, '')).join(', ');
 const itemLine = (r) => `${r.item}: avg ${r.avg} ${r.unit} (max ${r.max}, found at ${r.found}/${r.stops} stops = ${r.freq}%) — ${LEVELS[r.level].toUpperCase()}`;
+const shortDay = (k) => fmtDay(k).replace(/,? \d{4}$/, '');
+const plantLine = (p) => (p.type === 'stage'
+  ? `${p.item}: ${p.stage}${p.range ? ` (range ${p.range})` : ''} — ${p.pct}% of readings on ${shortDay(p.latestDay)}`
+  : `${p.item}: avg ${p.avg} ${p.unit} (range ${p.min}–${p.max}, ${p.n} reading${p.n === 1 ? '' : 's'}${p.cv != null && p.n > 1 ? `, CV ${p.cv}%` : ''})`);
+const stageOf = (f) => f.plant.find((p) => p.type === 'stage');
 
 export function reportText(rep) {
   const L = ['CROP SCOUTING REPORT', rangeText(rep)];
@@ -148,6 +191,7 @@ export function reportText(rep) {
   L.push('', 'FIELD OVERVIEW (highest severity per category)');
   for (const f of rep.fields) {
     L.push(`• ${f.name}${f.crop ? ` — ${f.crop}` : ''}${f.ha ? ` (${f.ha} ha)` : ''}, ${f.stops} stops`);
+    if (stageOf(f)) L.push(`   Stage: ${stageOf(f).stage}`);
     for (const c of CATEGORIES) {
       const x = f.cats[c.key];
       L.push(`   ${c.label}: ${x ? `${LEVELS[x.level].toUpperCase()} – ${x.top.item} avg ${x.top.avg} ${x.top.unit}` : 'none recorded'}`);
@@ -156,22 +200,39 @@ export function reportText(rep) {
   for (const f of rep.fields) {
     L.push('', `=== ${f.name}${f.crop ? ` — ${f.crop}` : ''}${f.ha ? ` (${f.ha} ha)` : ''} ===`);
     L.push(`${f.stops} stops · ${f.records.length} obs · scouted ${datesText(f)}`);
+    if (f.plant.length) {
+      L.push('  PLANT');
+      f.plant.forEach((p) => L.push(`   • ${plantLine(p)}`));
+    }
     for (const [cat, rows] of Object.entries(f.byCat)) {
       L.push(`  ${CAT_LABEL[cat].toUpperCase()}`);
       rows.forEach((r) => L.push(`   • ${itemLine(r)}`));
     }
     for (const d of f.daily) {
       L.push(`  -- ${fmtDay(d.key)}: ${d.stops} stops${d.visits.length ? `, in/out ${d.visits.map(visitText).join(', ')}` : ''}`);
+      d.plant.forEach((p) => L.push(`     Plant · ${plantLine(p)}`));
       for (const [cat, rows] of Object.entries(d.byCat)) rows.forEach((r) => L.push(`     ${CAT_LABEL[cat]} · ${r.item}: avg ${r.avg} (max ${r.max}, ${r.freq}% of stops) ${r.unit}`));
     }
   }
-  L.push('', 'Field avg = total count ÷ number of stops in the field (stops where it was not recorded count as 0).');
+  L.push('', 'Weeds/pests/diseases: field avg = total count ÷ stops in the field (stops where not recorded count as 0).');
+  L.push('Plant: average of readings taken; CV = variability between readings; stage = most common on the latest day.');
   L.push(`Generated ${new Date(rep.generated).toLocaleString()} by Crop Scout`);
   return L.join('\n');
 }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const badge = (lvl) => `<span class="lvl lvl-${lvl}">${LEVELS[lvl]}</span>`;
+
+function plantTable(plant) {
+  if (!plant.length) return '';
+  let h = '<table class="rep-table"><thead><tr><th>🌱 Plant</th><th>Avg / stage</th><th>Range</th><th>n</th><th>CV</th></tr></thead><tbody>';
+  for (const p of plant) {
+    h += p.type === 'stage'
+      ? `<tr><td>${esc(p.item)}<div class="unit">on ${esc(shortDay(p.latestDay))}</div></td><td colspan="1"><b>${esc(p.stage)}</b><div class="unit">${p.pct}% of readings</div></td><td>${esc(p.range || '—')}</td><td>${p.n}</td><td></td></tr>`
+      : `<tr><td>${esc(p.item)}<div class="unit">${esc(p.unit)}</div></td><td><b>${p.avg}</b></td><td>${p.min}–${p.max}</td><td>${p.n}</td><td>${p.cv != null && p.n > 1 ? `${p.cv}%` : ''}</td></tr>`;
+  }
+  return `${h}</tbody></table>`;
+}
 
 function itemTable(byCat, { compact = false } = {}) {
   let h = '';
@@ -190,9 +251,11 @@ export function reportHTML(rep) {
     <p class="muted">${esc(rangeText(rep))}${rep.scout ? ` · Scout: ${esc(rep.scout)}` : ''} · ${rep.total} observations</p>`;
   if (!rep.fields.length) return `${h}<p>No observations recorded in this period.</p></div>`;
 
-  h += `<table class="rep-table overview"><thead><tr><th>Field</th>${CATEGORIES.map((c) => `<th>${c.label}</th>`).join('')}</tr></thead><tbody>`;
+  const anyStage = rep.fields.some(stageOf);
+  h += `<table class="rep-table overview"><thead><tr><th>Field</th>${anyStage ? '<th>Stage</th>' : ''}${CATEGORIES.map((c) => `<th>${c.label}</th>`).join('')}</tr></thead><tbody>`;
   for (const f of rep.fields) {
     h += `<tr><td><b>${esc(f.name)}</b><div class="unit">${esc(f.crop || '')}${f.ha ? ` · ${f.ha} ha` : ''} · ${f.stops} stops</div></td>`;
+    if (anyStage) h += stageOf(f) ? `<td><b>${esc(String(stageOf(f).stage).split(/\s+/)[0])}</b><div class="unit">${esc(String(stageOf(f).stage).split(/\s+/).slice(1).join(' '))}</div></td>` : '<td class="muted">—</td>';
     for (const c of CATEGORIES) {
       const x = f.cats[c.key];
       h += x ? `<td>${badge(x.level)}<div class="unit">${esc(x.top.item)} ${x.top.avg}</div></td>` : '<td class="muted">—</td>';
@@ -204,34 +267,40 @@ export function reportHTML(rep) {
   for (const f of rep.fields) {
     h += `<section class="rep-field"><h3>${esc(f.name)} <small>${esc(f.crop || '')}${f.ha ? ` · ${f.ha} ha` : ''}</small></h3>
       <p class="muted">${f.stops} stops · ${f.records.length} obs · ${esc(datesText(f))}</p>
-      ${itemTable(f.byCat) || '<p class="muted">Visited — nothing recorded.</p>'}`;
+      ${(plantTable(f.plant) + itemTable(f.byCat)) || '<p class="muted">Visited — nothing recorded.</p>'}`;
     for (const d of f.daily) {
       h += `<div class="rep-day"><div class="rep-day-head"><strong>${esc(fmtDay(d.key))}</strong>
         <span class="muted">${d.stops} stops${d.visits.length ? ` · in/out ${d.visits.map(visitText).join(', ')}` : ''}</span></div>
-        ${itemTable(d.byCat, { compact: true }) || '<p class="muted">Visited — nothing recorded.</p>'}</div>`;
+        ${(plantTable(d.plant) + itemTable(d.byCat, { compact: true })) || '<p class="muted">Visited — nothing recorded.</p>'}</div>`;
     }
     h += '</section>';
   }
-  h += '<p class="muted" style="margin-top:12px">Field avg = total count ÷ stops in the field (stops where it was not recorded count as 0). Found = % of stops where it was present. Levels use the thresholds in Settings.</p>';
+  h += '<p class="muted" style="margin-top:12px">Weeds/pests/diseases: field avg = total count ÷ stops in the field (stops where it was not recorded count as 0); Found = % of stops where present; levels use the thresholds in Settings. Plant: average of the readings taken; CV = variability between readings; stage = most common stage on the latest day scouted.</p>';
   return `${h}</div>`;
 }
 
 const csvq = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 
 export function summaryCSV(rep) {
-  const cols = ['from', 'to', 'field', 'crop', 'hectares', 'stops', 'category', 'item', 'unit', 'field_avg', 'avg_where_present', 'max', 'stops_found', 'percent_stops', 'severity'];
-  const rows = rep.fields.flatMap((f) => f.items.map((r) => [rep.from, rep.to, f.name, f.crop, f.ha ?? '', f.stops, r.category, r.item, r.unit, r.avg, r.avgPresent, r.max, r.found, r.freq, LEVELS[r.level]]));
+  const cols = ['from', 'to', 'field', 'crop', 'hectares', 'stops', 'category', 'item', 'unit', 'field_avg', 'avg_where_present', 'min', 'max', 'stops_found', 'percent_stops', 'severity', 'readings', 'cv_percent', 'stage', 'stage_range', 'stage_date'];
+  const rows = rep.fields.flatMap((f) => [
+    ...f.plant.map((p) => (p.type === 'stage'
+      ? [rep.from, rep.to, f.name, f.crop, f.ha ?? '', f.stops, 'plant', p.item, '', '', '', '', '', '', '', '', p.n, '', p.stage, p.range, p.latestDay]
+      : [rep.from, rep.to, f.name, f.crop, f.ha ?? '', f.stops, 'plant', p.item, p.unit, p.avg, '', p.min, p.max, '', '', '', p.n, p.cv ?? '', '', '', ''])),
+    ...f.items.map((r) => [rep.from, rep.to, f.name, f.crop, f.ha ?? '', f.stops, r.category, r.item, r.unit, r.avg, r.avgPresent, '', r.max, r.found, r.freq, LEVELS[r.level], '', '', '', '', '']),
+  ]);
   return [cols, ...rows].map((r) => r.map(csvq).join(',')).join('\n');
 }
 
 export function recordsCSV(records) {
-  const cols = ['date', 'time', 'field', 'crop', 'stop', 'category', 'item', 'count', 'unit', 'latitude', 'longitude', 'gps_accuracy_m', 'source', 'note'];
+  const cols = ['date', 'time', 'field', 'crop', 'stop', 'category', 'item', 'count', 'unit', 'stage', 'latitude', 'longitude', 'gps_accuracy_m', 'source', 'note'];
   const stopOf = new Map();
   const byField = new Map();
   records.forEach((r) => { const k = `${r.fieldId || 'none'}|${dayKey(r.ts)}`; if (!byField.has(k)) byField.set(k, []); byField.get(k).push(r); });
   for (const list of byField.values()) assignStops(list).forEach((s) => s.records.forEach((r) => stopOf.set(r.id, s.id)));
   const rows = [...records].sort((a, b) => a.ts - b.ts).map((r) => [
-    dayKey(r.ts), fmtTime(r.ts), r.fieldName || 'Outside mapped fields', r.cropName, stopOf.get(r.id), r.category, r.item, r.count, r.unit,
+    dayKey(r.ts), fmtTime(r.ts), r.fieldName || 'Outside mapped fields', r.cropName, stopOf.get(r.id), r.category, r.item,
+    r.stage != null ? '' : r.count, r.unit, r.stage ?? '',
     r.lat?.toFixed(6), r.lng?.toFixed(6), r.acc != null ? Math.round(r.acc) : '', r.source, r.note,
   ]);
   return [cols, ...rows].map((r) => r.map(csvq).join(',')).join('\n');

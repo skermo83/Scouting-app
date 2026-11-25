@@ -1,6 +1,6 @@
 // Speech: turns phrases like "ryegrass 12 wild oats three aphids 5 per plant"
 // into structured counts matched against the crop's scouting menu.
-import { CATEGORIES } from './defaults.js';
+import { CATEGORIES, stageCode } from './defaults.js';
 
 const SMALL = {
   zero: 0, nil: 0, none: 0, nothing: 0, oh: 0, one: 1, won: 1, a: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4,
@@ -82,8 +82,38 @@ function bestItem(phrase, crops, preferCropId) {
         if (!best || s > best.score) best = { score: s, item, category: cat.key, cropId: crop.id };
       }
     }
+    // Plant metrics with a number value (stand count, nodes, NAWF, height…)
+    for (const m of crop.plant || []) {
+      if (m.type !== 'number') continue;
+      let s = matchScore(phrase, m.name);
+      if (crop.id === preferCropId) s += 0.06; // metric names repeat across crops; prefer this one
+      if (!best || s > best.score) best = { score: s, item: m.name, category: 'plant', cropId: crop.id, unit: m.unit };
+    }
   }
   return best;
+}
+
+// "stage 31", "zadoks 31", "growth stage first flower" -> an option of the crop's stage metric.
+function parseStage(rest, crops, preferCropId) {
+  const crop = crops.find((c) => c.id === preferCropId) || crops[0];
+  const metrics = [crop, ...crops.filter((c) => c !== crop)].flatMap((c) => (c.plant || []).filter((m) => m.type === 'stage'));
+  if (!metrics.length || !rest) return null;
+  const num = rest.match(/\d+(\.\d+)?/);
+  for (const m of metrics) {
+    if (num) {
+      const n = parseFloat(num[0]);
+      const opt = m.options.find((o) => stageCode(o) === n);
+      if (opt) return { metric: m, option: opt };
+    }
+    let best = null;
+    for (const o of m.options) {
+      const label = o.replace(/^[a-z]?-?\d+(\.\d+)?\s*/i, '');
+      const s = matchScore(rest, label || o);
+      if (!best || s > best.s) best = { s, o };
+    }
+    if (best && best.s >= 0.6) return { metric: m, option: best.o };
+  }
+  return null;
 }
 
 // Split words into [{words:[...], number}] using number words and digits.
@@ -147,9 +177,21 @@ function detectUnitM2(text, category) {
 export function parseSpeech(text, crops, preferCropId) {
   const norm = normalize(text);
   if (/^(undo|delete last|scratch that|cancel last|remove last)\b/.test(norm)) return { command: 'undo', entries: [] };
-  const words = norm.replace(/%/g, ' % ').split(' ').filter(Boolean);
-  const segs = segment(words);
   const entries = [];
+  // Growth stage: everything after the word "stage"/"zadoks" is the stage.
+  let countText = norm;
+  const sm = norm.match(/\b(?:growth stage|crop stage|stage|zadoks?)\b\s*(.*)$/);
+  if (sm) {
+    const hit = parseStage(sm[1].trim(), crops, preferCropId);
+    countText = norm.slice(0, sm.index).trim();
+    if (hit) {
+      entries.push({ heard: sm[0], matched: true, score: 1, category: 'plant', item: hit.metric.name, stage: hit.option, count: stageCode(hit.option) ?? 0, unit: '' });
+    } else {
+      entries.push({ heard: sm[0], matched: false, score: 0, category: 'plant', item: 'Growth stage', stage: sm[1].trim() || '?', count: stageCode(sm[1]) ?? 0, unit: '' });
+    }
+  }
+  const words = countText.replace(/%/g, ' % ').split(' ').filter(Boolean);
+  const segs = segment(words);
   for (const s of segs) {
     const nameWords = s.words.filter((w) => !FILLER.has(w) && !['per', 'plant', 'plants', 'square', 'metre', 'meter', 'percent', '%'].includes(w));
     if (!nameWords.length) continue;
@@ -167,9 +209,11 @@ export function parseSpeech(text, crops, preferCropId) {
       cropId: matched ? best.cropId : null,
       count: s.number ?? 1,
       noNumber: s.number == null,
-      unit: detectUnitM2(unitText, category) || detectUnit(unitText),
+      unit: category === 'plant' ? best.unit : detectUnitM2(unitText, category) || detectUnit(unitText),
     });
   }
+  // Keep spoken order: counts first, then stage (the stage was said last).
+  if (sm && entries.length > 1) entries.push(entries.shift());
   return { entries };
 }
 

@@ -1,12 +1,13 @@
 // Local persistence. All data lives on the phone (localStorage); use
 // Settings -> Backup to export/import.
-import { DEFAULT_CROPS, DEFAULT_UNITS, DEFAULT_THRESHOLDS } from './defaults.js';
+import { DEFAULT_CROPS, DEFAULT_UNITS, DEFAULT_THRESHOLDS, DEFAULT_PLANT_METRICS, GENERIC_PLANT_METRICS } from './defaults.js';
 
 const KEY = 'cropscout.v1';
 
 function fresh() {
   return {
     version: 1,
+    menusVersion: 2,
     scoutName: '',
     crops: structuredClone(DEFAULT_CROPS),
     units: { ...DEFAULT_UNITS },
@@ -19,10 +20,24 @@ function fresh() {
   };
 }
 
+// Bring data saved by older versions up to date.
+export function migrate(s) {
+  for (const c of s.crops) {
+    if (!Array.isArray(c.plant)) c.plant = structuredClone(DEFAULT_PLANT_METRICS[c.id] || GENERIC_PLANT_METRICS());
+  }
+  if ((s.menusVersion || 1) < 2) {
+    // v2 added Cotton to the default menus
+    const cotton = DEFAULT_CROPS.find((c) => c.id === 'cotton');
+    if (cotton && !s.crops.some((c) => c.id === 'cotton' || c.name.toLowerCase() === 'cotton')) s.crops.push(structuredClone(cotton));
+    s.menusVersion = 2;
+  }
+  return s;
+}
+
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && s.version === 1) return { ...fresh(), ...s };
+    if (s && s.version === 1) return migrate({ ...fresh(), ...s, menusVersion: s.menusVersion || 1 });
   } catch { /* fall through */ }
   return fresh();
 }
@@ -41,7 +56,7 @@ export function save() {
 export function replaceAll(data) {
   if (!data || data.version !== 1 || !Array.isArray(data.records)) throw new Error('Not a Crop Scout backup file');
   for (const k of Object.keys(state)) delete state[k];
-  Object.assign(state, fresh(), data);
+  Object.assign(state, migrate({ ...fresh(), ...data, menusVersion: data.menusVersion || 1 }));
   save();
 }
 

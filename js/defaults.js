@@ -145,3 +145,20 @@ export const stageCode = (label) => {
   const m = String(label).match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
 };
+
+// ---- Weed density & size (Weeds tab) ----------------------------------------
+// Density words are scored by position (1 = first … 5 = last); severity uses that score.
+export const DENSITY_UNIT = 'density';
+export const WEED_DENSITY = ['Odd', 'Scattered', 'Patchy', 'Thick', 'Carpet'];
+export const WEED_SIZE = ['Small', 'Medium', 'Large', 'Large flowering'];
+// Density score at or above: [Moderate, High]  -> Odd/Scattered Low, Patchy Moderate, Thick/Carpet High
+DEFAULT_THRESHOLDS[DENSITY_UNIT] = [3, 4];
+// Extra spoken words that mean the same thing (voice entry)
+export const DENSITY_SYNONYMS = {
+  odd: 0, odds: 0, occasional: 0, few: 0, sparse: 1, scattered: 1, scatter: 1, light: 1,
+  patchy: 2, patches: 2, patch: 2, patchie: 2, thick: 3, dense: 3, heavy: 3, carpet: 4, carpeted: 4, solid: 4,
+};
+export const SIZE_SYNONYMS = {
+  small: 0, little: 0, tiny: 0, seedling: 0, seedlings: 0, medium: 1, mid: 1, large: 2, big: 2,
+  flowering: 3, flower: 3, flowered: 3, seeding: 3, 'in flower': 3, 'large flowering': 3,
+};

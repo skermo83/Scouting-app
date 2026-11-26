@@ -238,3 +238,13 @@ code.url { display: block; word-break: break-all; background: var(--bg); padding
 .metric-list li { padding: 8px 2px; }
 .item-btn small b { color: var(--ink); }
 .item-btn { padding-right: 34px; }
+
+/* Weed density / size picker */
+.pick-grid { display: grid; gap: 8px; margin-top: 6px; }
+.pick-grid.density { grid-template-columns: repeat(3, 1fr); }
+.pick-grid.size { grid-template-columns: repeat(2, 1fr); }
+.pick { min-height: 56px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 6px; }
+.pick .dots { font-size: 0.6rem; letter-spacing: 1px; color: var(--weeds); }
+.pick.active { background: var(--weeds); border-color: var(--weeds); color: #fff; }
+.pick.active .dots { color: #fff; }
+.btn:disabled { opacity: 0.45; }

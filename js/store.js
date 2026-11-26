@@ -1,6 +1,6 @@
 // Local persistence. All data lives on the phone (localStorage); use
 // Settings -> Backup to export/import.
-import { DEFAULT_CROPS, DEFAULT_UNITS, DEFAULT_THRESHOLDS, DEFAULT_PLANT_METRICS, GENERIC_PLANT_METRICS } from './defaults.js';
+import { DEFAULT_CROPS, DEFAULT_UNITS, DEFAULT_THRESHOLDS, DEFAULT_PLANT_METRICS, GENERIC_PLANT_METRICS, WEED_DENSITY, WEED_SIZE } from './defaults.js';
 
 const KEY = 'cropscout.v1';
 
@@ -13,6 +13,8 @@ function fresh() {
     units: { ...DEFAULT_UNITS },
     thresholds: structuredClone(DEFAULT_THRESHOLDS),
     lastUnit: {},          // item name -> unit last used
+    lastSize: {},          // weed name -> size last used
+    weedScale: { density: [...WEED_DENSITY], size: [...WEED_SIZE] },
     fields: [],            // {id, name, cropId, shape:'polygon'|'circle', points:[[lat,lng]], center:[lat,lng], radius}
     records: [],           // {id, ts, fieldId, fieldName, cropId, cropName, category, item, count, unit, lat, lng, acc, note, source}
     events: [],            // {id, ts, type:'enter'|'exit', fieldId, fieldName}

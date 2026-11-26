@@ -1,4 +1,4 @@
-import { CATEGORIES, UNITS, DEFAULT_CROPS, PLANT_CAT, METRIC_TYPES, stageCode, DEFAULT_PLANT_METRICS, GENERIC_PLANT_METRICS } from './defaults.js';
+import { CATEGORIES, UNITS, DEFAULT_CROPS, PLANT_CAT, METRIC_TYPES, stageCode, DEFAULT_PLANT_METRICS, GENERIC_PLANT_METRICS, WEED_DENSITY, WEED_SIZE, DENSITY_UNIT } from './defaults.js';
 import { state, save, uid, cropById, fieldById, replaceAll, requestPersistence } from './store.js';
 import { Tracker, fieldAt, areaHa, fieldCenter, distance, fieldBBox } from './geo.js';
 import { readBoundaryFiles, guessNameKey, guessCropKey } from './importer.js';
@@ -101,7 +101,7 @@ function renderStatus() {
 
 // ---------------------------------------------------------------------------
 // Records
-function addRecord({ category, item, count, unit, stage, note = '', source = 'tap', pos = lastPos, field }) {
+function addRecord({ category, item, count, unit, stage, density, size, note = '', source = 'tap', pos = lastPos, field }) {
   const f = field !== undefined ? field : currentField();
   const crop = (f && cropById(f.cropId)) || currentCrop();
   const r = {
@@ -112,8 +112,15 @@ function addRecord({ category, item, count, unit, stage, note = '', source = 'ta
     lat: pos?.lat ?? null, lng: pos?.lng ?? null, acc: pos?.acc ?? null,
   };
   if (stage != null) { r.stage = stage; r.count = stageCode(stage) ?? 0; }
+  if (density != null) {
+    r.density = density;
+    r.size = size || null;
+    r.count = densityScore(density);
+    r.unit = DENSITY_UNIT;
+    if (size) state.lastSize[item] = size;
+  }
   state.records.push(r);
-  if (category !== 'plant') state.lastUnit[item] = unit;
+  if (category !== 'plant' && density == null) state.lastUnit[item] = unit;
   save();
   undoStack.push(r.id);
   return r;
@@ -136,8 +143,11 @@ function undoLast() {
 }
 
 const unitFor = (category, item) => state.lastUnit[item] || state.units[category] || 'count';
-const recordLabel = (r) => (r.stage != null ? `${r.item}: ${r.stage}` : `${r.item} ${r.count} ${r.unit}`.trim());
-const recordShort = (r) => (r.stage != null ? `${r.item} ${r.stage}` : `${r.item} ${r.count}`);
+const weedScale = () => ({ density: state.weedScale?.density?.length ? state.weedScale.density : WEED_DENSITY, size: state.weedScale?.size?.length ? state.weedScale.size : WEED_SIZE });
+const densityScore = (d) => Math.max(1, weedScale().density.indexOf(d) + 1);
+const densitySize = (r) => `${r.density}${r.size ? `, ${r.size.toLowerCase()}` : ''}`;
+const recordLabel = (r) => (r.density != null ? `${r.item}: ${densitySize(r)}` : r.stage != null ? `${r.item}: ${r.stage}` : `${r.item} ${r.count} ${r.unit}`.trim());
+const recordShort = (r) => (r.density != null ? `${r.item} ${densitySize(r)}` : r.stage != null ? `${r.item} ${r.stage}` : `${r.item} ${r.count}`);
 const metricsOf = (crop) => crop?.plant || [];
 const findMetric = (cropId, name) => metricsOf(cropById(cropId)).find((m) => m.name === name)
   || state.crops.flatMap(metricsOf).find((m) => m.name === name) || null;
@@ -197,7 +207,7 @@ function recordItemHTML(r, { showField = false } = {}) {
     <span class="tag cat-${r.category}"></span>
     <div class="grow"><div class="title">${esc(r.item)}${r.source === 'voice' || r.source === 'siri' ? ' 🎤' : ''}</div>
       <div class="sub">${fmtTime(r.ts)}${showField ? ` · ${esc(r.fieldName || 'Outside fields')}` : ''}${r.note ? ` · ${esc(r.note)}` : ''}</div></div>
-    ${r.stage != null ? `<div class="val stage-val">${esc(r.stage)}</div>` : `<div class="val">${r.count}<small>${esc(r.unit)}</small></div>`}</li>`;
+    ${r.density != null ? `<div class="val stage-val">${esc(r.density)}<small>${esc(r.size || '')}</small></div>` : r.stage != null ? `<div class="val stage-val">${esc(r.stage)}</div>` : `<div class="val">${r.count}<small>${esc(r.unit)}</small></div>`}</li>`;
 }
 
 function destroyMaps() {
@@ -271,7 +281,8 @@ function renderScout() {
     </div>
     <div class="heard" id="heard">${heardText || (!speechSupported ? 'Voice entry needs Safari (iPhone) or Chrome (Android).'
       : ui.category === 'plant' ? 'Say e.g. <b>“plant stand 12”</b>, <b>“nodes 16 NAWF 4”</b> or <b>“stage first flower”</b> / <b>“stage 31”</b>.'
-        : 'Say e.g. <b>“ryegrass 12”</b> or <b>“aphids 5 per plant, wild oats 3”</b>. Say <b>“undo”</b> to remove the last one.')}</div>
+        : ui.category === 'weeds' ? 'Say e.g. <b>“ryegrass patchy large”</b> or <b>“wild radish thick flowering”</b>. Say <b>“undo”</b> to remove the last one.'
+          : 'Say e.g. <b>“aphids 5 per plant”</b> or <b>“stripe rust 10 percent”</b>. Say <b>“undo”</b> to remove the last one.')}</div>
 
     <div class="seg seg4">${SCOUT_TABS.map((c) => `<button data-act="cat" data-cat="${c.key}" class="${ui.category === c.key ? 'active' : ''}"><span>${c.icon}</span>${c.label}</button>`).join('')}</div>
 
@@ -288,7 +299,10 @@ function renderScout() {
           <small>${info}</small>
           ${recs.length ? `<span class="dot cat-plant">${recs.length}</span>` : ''}</button>`;
       }).join('') : items.map((it) => `<button class="item-btn" data-act="count" data-item="${esc(it)}">${esc(it)}
-          <small>${esc(unitFor(ui.category, it))}</small>
+          <small>${ui.category === 'weeds' ? (() => {
+            const last = todays.filter((r) => r.item === it && r.category === 'weeds').pop();
+            return last?.density ? `<b>${esc(last.density)}</b>${last.size ? ` · ${esc(last.size.toLowerCase())}` : ''}` : last ? `<b>${last.count}</b> ${esc(last.unit)}` : 'density · size';
+          })() : esc(unitFor(ui.category, it))}</small>
           ${countsToday[it] ? `<span class="dot cat-${ui.category}">${countsToday[it]}</span>` : ''}</button>`).join('')}
       <button class="item-btn add" data-act="${ui.category === 'plant' ? 'add-metric' : 'add-item'}">＋ Add ${ui.category === 'plant' ? 'metric' : CAT[ui.category].label.toLowerCase().replace(/s$/, '')}</button>
     </div>
@@ -309,6 +323,64 @@ function renderScout() {
     rerender();
   };
   $('#cropSelect').onchange = (e) => { ui.cropId = e.target.value; saveUI(); renderScout(); };
+}
+
+// Weed: pick a density (Odd … Carpet) and a size (Small … Large flowering).
+function openWeedSheet({ item, record }) {
+  const editing = !!record;
+  const { density: D, size: Z } = weedScale();
+  const f = editing ? { name: record.fieldName } : currentField();
+  let density = record?.density ?? null;
+  let size = editing ? record.size ?? null : state.lastSize[item] ?? null;
+  const dots = (i) => '●'.repeat(i + 1);
+  openSheet(`
+    <h2>🌿 ${esc(item)}</h2>
+    <div class="muted">${esc(f?.name || 'Outside fields')}${editing ? ` · ${fmtDay(dayKey(record.ts))} ${fmtTime(record.ts)}` : lastPos ? ` · GPS ±${Math.round(lastPos.acc)}m` : ' · no GPS fix yet'}</div>
+    <label class="lbl" style="margin-top:14px">Density</label>
+    <div class="pick-grid density">${D.map((d, i) => `<button class="pick ${d === density ? 'active' : ''}" data-d="${i}"><span class="dots">${dots(i)}</span>${esc(d)}</button>`).join('')}</div>
+    <label class="lbl" style="margin-top:12px">Size</label>
+    <div class="pick-grid size">${Z.map((z, i) => `<button class="pick ${z === size ? 'active' : ''}" data-z="${i}">${/flower/i.test(z) ? '🌼 ' : ''}${esc(z)}</button>`).join('')}</div>
+    <div class="stack" style="margin-top:12px">
+      <div><label class="lbl">Note (optional)</label><input id="note" type="text" value="${esc(record?.note || '')}" placeholder="e.g. along fence line"></div>
+      <div class="row">
+        ${editing ? '<button class="btn danger" data-w="delete">Delete</button>' : '<button class="btn" data-w="count">Enter a count instead</button>'}
+        <button class="btn primary" data-w="save" ${density ? '' : 'disabled'}>Save</button>
+      </div>
+    </div>`, {
+    onMount: (s) => {
+      const refresh = () => {
+        $$('[data-d]', s).forEach((b) => b.classList.toggle('active', D[b.dataset.d] === density));
+        $$('[data-z]', s).forEach((b) => b.classList.toggle('active', Z[b.dataset.z] === size));
+        $('[data-w=save]', s).disabled = !density;
+      };
+      s.onclick = (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.d != null) { density = D[b.dataset.d]; buzz(15); refresh(); return; }
+        if (b.dataset.z != null) { size = Z[b.dataset.z] === size ? null : Z[b.dataset.z]; buzz(15); refresh(); return; }
+        if (b.dataset.w === 'count') { closeSheet(); openCountSheet({ category: 'weeds', item }); return; }
+        if (b.dataset.w === 'delete') {
+          if (confirm('Delete this record?')) { deleteRecord(record.id); closeSheet(); rerender(); }
+          return;
+        }
+        if (b.dataset.w === 'save' && density) {
+          const note = $('#note', s).value.trim();
+          if (editing) {
+            Object.assign(record, { density, size, count: densityScore(density), unit: DENSITY_UNIT, note });
+            if (size) state.lastSize[item] = size;
+            save();
+            toast('Updated');
+          } else {
+            const r = addRecord({ category: 'weeds', item, density, size, note });
+            toast(`Saved ${recordLabel(r)}`, { label: 'Undo', fn: () => { deleteRecord(r.id); rerender(); } });
+            buzz(40);
+          }
+          closeSheet();
+          rerender();
+        }
+      };
+    },
+  });
 }
 
 // Growth stage (or any pick-list metric): one tap on an option saves it.
@@ -420,7 +492,7 @@ function openCountSheet({ category, item, record, unit: presetUnit }) {
 
 function handleSpeech(text) {
   const crop = currentCrop();
-  const { command, entries } = parseSpeech(text, state.crops, crop?.id);
+  const { command, entries } = parseSpeech(text, state.crops, crop?.id, weedScale());
   if (command === 'undo') { heardText = `Heard: <b>${esc(text)}</b>`; undoLast(); return; }
   if (!entries.length) {
     heardText = `Heard: <b>${esc(text)}</b> — no count recognised`;
@@ -429,7 +501,7 @@ function handleSpeech(text) {
     return;
   }
   const saved = entries.map((e) => addRecord({
-    category: e.category, item: e.item, count: e.count, stage: e.stage,
+    category: e.category, item: e.item, count: e.count, stage: e.stage, density: e.density, size: e.size,
     unit: e.category === 'plant' ? e.unit : e.unit || unitFor(e.category, e.item),
     note: e.matched ? '' : `Voice: "${e.heard}" (not in menu)`, source: 'voice',
   }));
@@ -953,6 +1025,22 @@ function renderSettings() {
     </div>
 
     <div class="card stack">
+      <h3 style="margin-top:0">🌿 Weed density &amp; size</h3>
+      <div class="row" style="align-items:flex-start">
+        <div><label class="lbl">Density (lightest first)</label><textarea id="wsDensity" rows="5">${esc(weedScale().density.join('\n'))}</textarea></div>
+        <div><label class="lbl">Size (smallest first)</label><textarea id="wsSize" rows="5">${esc(weedScale().size.join('\n'))}</textarea></div>
+      </div>
+      ${(() => {
+        const [mod, high] = (state.thresholds || {})[DENSITY_UNIT] || DEFAULT_THRESHOLDS[DENSITY_UNIT];
+        const opts = (sel) => weedScale().density.map((d, i) => `<option value="${i + 1}" ${i + 1 === sel ? 'selected' : ''}>${esc(d)}</option>`).join('');
+        return `<div class="row"><div><label class="lbl">Moderate from</label><select data-dthr="0">${opts(mod)}</select></div>
+          <div><label class="lbl">High from</label><select data-dthr="1">${opts(high)}</select></div></div>`;
+      })()}
+      <div class="muted">One per line. The report rates each weed by its usual density in the field. Any “flowering” size is flagged 🌼.</div>
+      <button class="btn small" data-act="ws-reset">Reset to defaults</button>
+    </div>
+
+    <div class="card stack">
       <h3 style="margin-top:0">Default count units</h3>
       ${CATEGORIES.map((c) => `<div class="row"><span style="flex:0 0 90px">${c.label}</span><select data-unit="${c.key}">${unitOptions(state.units[c.key])}</select></div>`).join('')}
       <div class="muted">Each item remembers the last unit you used for it.</div>
@@ -1009,6 +1097,24 @@ function renderSettings() {
   $('#setScout').onchange = (e) => { state.scoutName = e.target.value.trim(); save(); };
   $('#setEmail').onchange = (e) => { state.reportEmail = e.target.value.trim(); save(); };
   $$('[data-unit]').forEach((sel) => { sel.onchange = () => { state.units[sel.dataset.unit] = sel.value; save(); }; });
+  const wsSave = (key, el) => {
+    const list = el.value.split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!list.length) { toast('Keep at least one option'); return; }
+    state.weedScale = { ...weedScale(), [key]: list };
+    save();
+    renderSettings();
+  };
+  $('#wsDensity').onchange = (e) => wsSave('density', e.target);
+  $('#wsSize').onchange = (e) => wsSave('size', e.target);
+  $$('[data-dthr]').forEach((sel) => {
+    sel.onchange = () => {
+      state.thresholds ||= {};
+      const t = [...((state.thresholds[DENSITY_UNIT]) || DEFAULT_THRESHOLDS[DENSITY_UNIT])];
+      t[Number(sel.dataset.dthr)] = Number(sel.value);
+      state.thresholds[DENSITY_UNIT] = t;
+      save();
+    };
+  });
   $$('[data-thr]').forEach((inp) => {
     inp.onchange = () => {
       const u = inp.dataset.thr;
@@ -1048,7 +1154,10 @@ document.addEventListener('click', async (e) => {
   switch (act) {
     case 'close-sheet': closeSheet(); break;
     case 'cat': ui.category = el.dataset.cat; saveUI(); renderScout(); break;
-    case 'count': openCountSheet({ category: ui.category, item: el.dataset.item }); break;
+    case 'count':
+      if (ui.category === 'weeds') openWeedSheet({ item: el.dataset.item });
+      else openCountSheet({ category: ui.category, item: el.dataset.item });
+      break;
     case 'add-item': {
       const name = prompt(`Add a ${CAT[ui.category].label.toLowerCase().replace(/s$/, '')} to the ${currentCrop().name} menu:`);
       if (name?.trim()) { currentCrop()[ui.category].push(name.trim()); save(); renderScout(); }
@@ -1057,7 +1166,8 @@ document.addEventListener('click', async (e) => {
     case 'edit-record': {
       const r = state.records.find((x) => x.id === el.dataset.id);
       if (!r) break;
-      if (r.stage != null) openStageSheet({ metric: findMetric(r.cropId, r.item), record: r });
+      if (r.density != null) openWeedSheet({ item: r.item, record: r });
+      else if (r.stage != null) openStageSheet({ metric: findMetric(r.cropId, r.item), record: r });
       else openCountSheet({ category: r.category, item: r.item, record: r });
       break;
     }
@@ -1111,6 +1221,11 @@ document.addEventListener('click', async (e) => {
     case 'rep-raw': download(`${reportFileBase(lastReport)}_all-counts.csv`, recordsCSV(lastReport.records), 'text/csv'); break;
     case 'rep-byday': ui.reportByDay = !ui.reportByDay; saveUI(); rerender(); break;
     case 'thr-reset': state.thresholds = structuredClone(DEFAULT_THRESHOLDS); save(); renderSettings(); break;
+    case 'ws-reset':
+      state.weedScale = { density: [...WEED_DENSITY], size: [...WEED_SIZE] };
+      state.thresholds = { ...(state.thresholds || {}), [DENSITY_UNIT]: [...DEFAULT_THRESHOLDS[DENSITY_UNIT]] };
+      save(); renderSettings();
+      break;
     case 'rep-print': $('#printArea').innerHTML = reportHTML(lastReport); window.print(); break;
     case 'crop-add': {
       const name = prompt('New crop name (e.g. Lentil, Oats, Cotton):');
@@ -1185,7 +1300,7 @@ async function handleSiriLaunch() {
   const field = ui.fieldMode === 'auto' ? (pos ? fieldAt([pos.lat, pos.lng], state.fields) : null) : fieldById(ui.fieldMode);
   if (field?.cropId) ui.cropId = field.cropId;
 
-  const { command, entries } = parseSpeech(text, state.crops, (field && field.cropId) || ui.cropId);
+  const { command, entries } = parseSpeech(text, state.crops, (field && field.cropId) || ui.cropId, weedScale());
   if (command === 'undo') {
     const last = state.records.slice().sort((a, b) => b.ts - a.ts)[0];
     if (last && confirm(`Remove last record: ${recordLabel(last)}?`)) { deleteRecord(last.id); toast('Removed'); }
@@ -1193,7 +1308,7 @@ async function handleSiriLaunch() {
     return rerender();
   }
   const saved = entries.map((en) => addRecord({
-    category: en.category, item: en.item, count: en.count, stage: en.stage,
+    category: en.category, item: en.item, count: en.count, stage: en.stage, density: en.density, size: en.size,
     unit: en.category === 'plant' ? en.unit : en.unit || unitFor(en.category, en.item),
     note: en.matched ? '' : `Siri: "${en.heard}" (not in menu)`, source: 'siri', pos, field,
   }));

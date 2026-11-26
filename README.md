@@ -11,18 +11,20 @@ It's an installable web app (PWA): no App Store needed, works offline once loade
   - Or draw fields by tapping corners on a satellite map, walking or driving the fence line, or dropping a circle where you stand.
 - **Automatic field detection**: GPS works out which paddock you're in and logs when you **walk in and out**, with on-screen and vibration alerts. You can also pin a field manually.
 - **Customisable scouting menus** per crop (weeds / pests / diseases). Defaults are provided for Wheat, Barley, Canola, Chickpea, Faba bean and Cotton. Add or remove crops and items in Settings, or add an item on the spot from the Scout screen.
+- **🌿 Weeds by density and size**: tap a weed, then a density (**Odd / Scattered / Patchy / Thick / Carpet**) and a size (**Small / Medium / Large / Large flowering**). The size you used last is remembered for each weed. The words can be edited in Settings, and an "Enter a count instead" option is there if you want plants/m².
 - **🌱 Plant tab**: plant stand counts, growth stages and any other crop measurement, set per crop.
   - *Number* metrics, e.g. plant stand, nodes, NAWF / NAWS, fruit retention %, squares or bolls per m, height, tillers, pods per plant.
   - *Stage* metrics: one tap picks from a list, e.g. Zadoks for cereals, canola growth stages, cotton (squaring → first flower → cutout → open boll), or pulse stages.
   - Add, edit, reorder or remove metrics, or create your own pick lists, in Settings → Plant metrics.
 - **Fast counting**: tap an item, then use the big +/− buttons, quick numbers or the keypad. Units: plants/m², per m², per plant, per 10 sweeps, % plants affected, severity 0–9, count. Each item remembers its last unit.
 - **Voice entry**
-  - 🎤 Tap and say “ryegrass 12”, “aphids 5 per plant, wild oats three” or “RLEM 40”. Plant metrics work too: “plant stand 12”, “nodes 16 NAWF 4”, “stage 31”, “growth stage first flower”. Spoken numbers, plurals and acronyms are understood. Say “undo” to remove the last entry.
+  - 🎤 Tap and say “ryegrass 12”, “aphids 5 per plant, wild oats three” or “RLEM 40”. Weeds: “ryegrass patchy large”, “wild radish thick flowering”. Plant metrics work too: “plant stand 12”, “nodes 16 NAWF 4”, “stage 31”, “growth stage first flower”. Spoken numbers, plurals and acronyms are understood. Say “undo” to remove the last entry.
   - **Hands-free mode** keeps listening and keeps the screen awake while you walk.
   - **“Hey Siri, Scout”** through an iPhone Shortcut (set-up steps are in Settings).
 - **Summary report** for any date range (Today / Yesterday / 7 days / 30 days / custom):
   - Field overview with the worst Weeds / Pests / Diseases rating per field.
-  - For each field and each weed, pest and disease: **field average**, max, % of stops where it was found, and a **Low / Moderate / High** severity rating.
+  - Weeds: the **usual density** where found (e.g. “Patchy, up to Thick”), the usual size, 🌼 if any were flowering, and % of stops found. Rated Low (Odd/Scattered), Moderate (Patchy) or High (Thick/Carpet); the cut-offs can be changed in Settings.
+  - For pests and diseases (and weeds entered as counts): **field average**, max, % of stops where it was found, and a **Low / Moderate / High** severity rating.
   - **Plant metrics** per field: average, range and CV% (coefficient of variation) of the readings, e.g. stand evenness, nodes, NAWF. For stages, the most common stage on the latest scouting day plus the range across the paddock. The field overview shows the current stage.
   - Optional **by-day** breakdown, with paddock in/out times.
   - Share sheet (text plus a field-summary CSV and an all-counts CSV), email, PDF/print, or CSV download.

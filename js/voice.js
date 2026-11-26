@@ -1,6 +1,6 @@
 // Speech: turns phrases like "ryegrass 12 wild oats three aphids 5 per plant"
 // into structured counts matched against the crop's scouting menu.
-import { CATEGORIES, stageCode } from './defaults.js';
+import { CATEGORIES, stageCode, WEED_DENSITY, WEED_SIZE, DENSITY_UNIT, DENSITY_SYNONYMS, SIZE_SYNONYMS } from './defaults.js';
 
 const SMALL = {
   zero: 0, nil: 0, none: 0, nothing: 0, oh: 0, one: 1, won: 1, a: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4,
@@ -72,10 +72,11 @@ export function matchScore(phrase, item) {
   return Math.max(whole, tokenScore, contains);
 }
 
-function bestItem(phrase, crops, preferCropId) {
+function bestItem(phrase, crops, preferCropId, onlyCats = null) {
   let best = null;
   for (const crop of crops) {
     for (const cat of CATEGORIES) {
+      if (onlyCats && !onlyCats.includes(cat.key)) continue;
       for (const item of crop[cat.key] || []) {
         let s = matchScore(phrase, item);
         if (crop.id === preferCropId) s += 0.05; // prefer the current crop's menu
@@ -83,6 +84,7 @@ function bestItem(phrase, crops, preferCropId) {
       }
     }
     // Plant metrics with a number value (stand count, nodes, NAWF, height…)
+    if (onlyCats && !onlyCats.includes('plant')) continue;
     for (const m of crop.plant || []) {
       if (m.type !== 'number') continue;
       let s = matchScore(phrase, m.name);
@@ -174,7 +176,7 @@ function detectUnitM2(text, category) {
  * Parse a spoken phrase.
  * @returns {{command?:string, entries:Array<{category,item,count,unit,matched,score,heard}>}}
  */
-export function parseSpeech(text, crops, preferCropId) {
+export function parseSpeech(text, crops, preferCropId, scale = null) {
   const norm = normalize(text);
   if (/^(undo|delete last|scratch that|cancel last|remove last)\b/.test(norm)) return { command: 'undo', entries: [] };
   const entries = [];
@@ -191,27 +193,79 @@ export function parseSpeech(text, crops, preferCropId) {
     }
   }
   const words = countText.replace(/%/g, ' % ').split(' ').filter(Boolean);
-  const segs = segment(words);
-  for (const s of segs) {
-    const nameWords = s.words.filter((w) => !FILLER.has(w) && !['per', 'plant', 'plants', 'square', 'metre', 'meter', 'percent', '%'].includes(w));
-    if (!nameWords.length) continue;
-    const heard = nameWords.join(' ');
-    const best = bestItem(heard, crops, preferCropId);
-    const matched = best && best.score >= 0.62;
-    const unitText = `${s.words.join(' ')} ${s.unitText || ''}`;
-    const category = matched ? best.category : 'other';
-    entries.push({
-      heard,
-      matched,
-      score: best?.score ?? 0,
-      category,
-      item: matched ? best.item : heard.replace(/\b\w/g, (c) => c.toUpperCase()),
-      cropId: matched ? best.cropId : null,
-      count: s.number ?? 1,
-      noNumber: s.number == null,
-      unit: category === 'plant' ? best.unit : detectUnitM2(unitText, category) || detectUnit(unitText),
-    });
+  const countEntries = (segs) => {
+    for (const s of segs) {
+      const nameWords = s.words.filter((w) => !FILLER.has(w) && !['per', 'plant', 'plants', 'square', 'metre', 'meter', 'percent', '%'].includes(w));
+      if (!nameWords.length) continue;
+      const heard = nameWords.join(' ');
+      const best = bestItem(heard, crops, preferCropId);
+      const matched = best && best.score >= 0.62;
+      const unitText = `${s.words.join(' ')} ${s.unitText || ''}`;
+      const category = matched ? best.category : 'other';
+      entries.push({
+        heard,
+        matched,
+        score: best?.score ?? 0,
+        category,
+        item: matched ? best.item : heard.replace(/\b\w/g, (c) => c.toUpperCase()),
+        cropId: matched ? best.cropId : null,
+        count: s.number ?? 1,
+        noNumber: s.number == null,
+        unit: category === 'plant' ? best.unit : detectUnitM2(unitText, category) || detectUnit(unitText),
+      });
+    }
+  };
+
+  // Weed density: "<weed> [size] <density> [size]", e.g. "ryegrass patchy large", "radish thick flowering".
+  const densityWords = (scale?.density || WEED_DENSITY).map((d) => normalize(d));
+  const sizeWords = (scale?.size || WEED_SIZE).map((d) => normalize(d));
+  const densityIndex = (w) => {
+    const i = densityWords.indexOf(w);
+    if (i >= 0) return i;
+    const syn = DENSITY_SYNONYMS[w];
+    return syn != null && syn < densityWords.length ? syn : -1;
+  };
+  const sizeIndex = (w) => {
+    const i = sizeWords.indexOf(w);
+    if (i >= 0) return i;
+    const syn = SIZE_SYNONYMS[w];
+    return syn != null && syn < sizeWords.length ? syn : -1;
+  };
+  // Combine size words: anything "flowering" wins, otherwise the largest size said.
+  const pickSize = (idxs) => (idxs.length ? Math.max(...idxs) : -1);
+
+  let buf = [];
+  for (let i = 0; i < words.length; i++) {
+    const d = densityIndex(words[i]);
+    if (d < 0) { buf.push(words[i]); continue; }
+    const sizes = [];
+    while (buf.length && sizeIndex(buf[buf.length - 1]) >= 0) sizes.push(sizeIndex(buf.pop()));
+    let j = i + 1;
+    while (j < words.length && (sizeIndex(words[j]) >= 0 || (words[j] === 'in' && sizeIndex(words[j + 1] || '') >= 0))) {
+      if (words[j] !== 'in') sizes.push(sizeIndex(words[j]));
+      j++;
+    }
+    const segs = segment(buf);
+    const nameSeg = segs.length && segs[segs.length - 1].noNumber ? segs.pop() : null;
+    countEntries(segs);
+    const nameWords = (nameSeg?.words || []).filter((w) => !FILLER.has(w));
+    if (nameWords.length) {
+      const heard = nameWords.join(' ');
+      const best = bestItem(heard, crops, preferCropId, ['weeds']);
+      const matched = best && best.score >= 0.62;
+      const si = pickSize(sizes);
+      entries.push({
+        heard, matched, score: best?.score ?? 0, category: 'weeds',
+        item: matched ? best.item : heard.replace(/\b\w/g, (c) => c.toUpperCase()),
+        density: (scale?.density || WEED_DENSITY)[d],
+        size: si >= 0 ? (scale?.size || WEED_SIZE)[si] : null,
+        count: d + 1, unit: DENSITY_UNIT,
+      });
+    }
+    buf = [];
+    i = j - 1;
   }
+  countEntries(segment(buf));
   // Keep spoken order: counts first, then stage (the stage was said last).
   if (sm && entries.length > 1) entries.push(entries.shift());
   return { entries };
